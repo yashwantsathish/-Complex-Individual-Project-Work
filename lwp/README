@@ -1,0 +1,21 @@
+Yashwant Sathish Kumar
+
+Question: “How is this LWP library different from a real thread management library? 
+Name two ways in which this LWP library API or functionality could be improved.”
+
+Answer to question: 
+
+How this is different from real thread management library: 
+After doing my research, I found that real thread management libraries have expanded functionality, 
+most particularly to handle synchronizations. For example, the POSIX Threads library incorporates
+semaphores to control access to shared resources. Real thread management libraries are also more
+memory-efficient and scalable when it comes to dealing with a large number of threads. We're managing
+and allocating memory in a fixed manner while other thread libraries allocate dynamically. 
+
+2 ways this LWP library API could be improved: 1. Like we talked about in class, adding locks 
+(with blocking/waiting) or some method of synchronization between threads could make sure shared
+data between threads are being properly preserved. 2. As talked about in the textbook, we 
+could also add a way of dynamic memory allocation for the thread stack instead of the "static" way
+we're doing it right now so that we're only using the amount of memory we need to.
+
+'make' does not build numbersmain. No additional comments or special instructions. 
