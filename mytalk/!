@@ -1,0 +1,283 @@
+/*My name is Yashwant Sathish Kumar and this is mytalk.c */
+
+#include <arpa/inet.h>
+#include <getopt.h>
+#include <netdb.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/select.h>
+#include <unistd.h>
+#include <poll.h>
+#include <talk.h>
+#include <pwd.h>
+#include <ctype.h>
+
+#define MAX_CONNECTIONS 1
+#define MAXLINE 1024
+#define LOCAL 0
+#define REMOTE 1
+
+int has_v = 0;
+int has_a = 0;
+int has_N = 0;
+int sockfd, done;
+struct sockaddr_in sa;
+struct hostent *hostent;
+char* hostname;
+
+void chat(int sock);
+void setupclient(){
+
+    uid_t uid;
+    struct passwd *user;
+    char buf[MAXLINE] = {'\0'};
+    char *pass= "ok";
+    int i;
+
+    if (sprintf(buf, "Waiting for response from %s.\n", hostname) < 0) {
+        perror("sprintf");
+        close(sockfd);
+        exit(1);
+    }
+
+    write_to_output(buf, strlen(buf));
+    for (i = 0; i < MAXLINE; i++) {
+        buf[i] = '\0';
+    }
+
+    uid = getuid();
+    user = getpwuid(uid);
+
+    if (send(sockfd, user->pw_name, strlen(user->pw_name), 0) == -1) {
+        stop_windowing();
+        perror("send");
+        close(sockfd);
+        exit(1);
+    }
+    if (has_v) { printf("username sent\n"); }
+
+    if (recv(sockfd, buf, MAXLINE, 0) < 0) {
+        perror("recv");
+        close(sockfd);
+        exit(1);
+    }
+
+    if (has_v) { printf("server response received"); }
+
+    if (strcmp(buf, pass)) {
+        fprintf(stderr, "%s declined connection.\n", hostname);
+        close(sockfd);
+        exit(1);
+    }
+
+    if (has_v) { printf("connection accepted"); }
+
+    if (!has_N) { start_windowing(); }
+
+    chat(sockfd);
+
+}
+
+void setupserver(){
+
+    int input, i;
+    struct sockaddr_in peerinfo;
+    socklen_t slen;
+    char buff[MAXLINE] = {'\0'};
+    char client[MAXLINE] = {'\0'};
+    char ans[4] = {'\0'};
+    char *pass = "ok";
+    char *fail = "fail";
+
+    slen = sizeof(peerinfo);
+    while ((input = accept(sockfd, (struct sockaddr *)&peerinfo, &slen)) <= 0) { }
+
+    recv(input, client, MAXLINE, 0);
+    gethostname(buff, MAXLINE);
+    printf("Mytalk request from %s@%s. Accept (y/n)?\n", client, buff);
+
+    if (!has_a) {
+        scanf("%s", ans);
+
+        for (i = 0; i < strlen(ans); i++) {
+            ans[i] = tolower((unsigned char)ans[i]);
+        }
+
+        if (!strcmp(ans, "y") || !strcmp(ans, "yes")) {
+            if (has_v) { printf("Prompt received\n"); }
+            if (send(input, pass, strlen(pass), 0) == -1) {
+                perror("send");
+                close(sockfd);
+                exit(1);
+            }
+        }
+        else {
+            if (send(input, fail, strlen(fail), 0) == -1) {
+                perror("send");
+                close(sockfd);
+                exit(1);
+            }
+        }
+    }
+    else {
+        if (send(input, pass, strlen(pass), 0) == -1) {
+            perror("send");
+            close(sockfd);
+            exit(1);
+        }
+    }
+
+    if (!has_N) { start_windowing(); }
+
+    chat(input);
+}
+
+void chat(int sock){
+
+    int count, i;
+    char buf[MAXLINE] = {'\0'};
+    struct pollfd fds[2];
+
+    fds[LOCAL].fd = STDIN_FILENO;
+    fds[LOCAL].events = POLLIN;
+    fds[LOCAL].revents = 0;
+    fds[REMOTE].fd = sock;
+    fds[REMOTE].events = POLLIN;
+    fds[REMOTE].revents = 0;
+
+    while (1) {
+        poll(fds, 2, -1);
+        update_input_buffer();
+
+        if (has_whole_line()) {
+            for (i = 0; i < MAXLINE; i++) {
+                buf[i] = '\0';
+            }
+            if ((count = read_from_input(buf, MAXLINE)) > 0) {
+                if (has_hit_eof()) {
+                    send(sock, buf, count, 0);
+                    stop_windowing();
+                    close(sock);
+                    exit(0);
+                }
+                else {
+                    send(sock, buf, count, 0);
+                }
+            }
+        }
+
+        if (fds[REMOTE].revents & POLLIN) {
+            for (i = 0; i < MAXLINE; i++) {
+                buf[i] = '\0';
+            }
+            if ((count = recv(sock, buf, MAXLINE, 0)) > 0) {
+                write_to_output(buf, count);
+            }
+            else {
+                fprint_to_output("\nConnection closed. ^C to terminate.\n");
+                close(sock);
+                while (1) { pause(); }
+            }
+        }
+    }
+
+}
+/*main takes in the port and hostname as arguments and calls the 
+ *  * respect server and client functions depending on the args passed
+ *   * in. */
+int main(int argc, char *argv[]){
+
+    int opt;
+    int port;
+
+    if (argc < 2 || argc > 6) {
+        fprintf(stderr, "usage: mytalk [ -v ] [ -a ] [ -N ] [ hostname ] port");
+        exit(EXIT_FAILURE);
+    }
+
+    while ((opt = getopt(argc, argv, "vaN")) != -1) {
+        switch (opt)
+        {
+            case 'v':
+                has_v = 1;
+                break;
+            case 'a':
+                has_a = 1;
+                break;
+            case 'N':
+                has_N = 1;
+                break;
+            default:
+                fprintf(stderr, 
+                "usage: mytalk [ -v ] [ -a ] [ -N ] [ hostname ] port");
+                exit(EXIT_FAILURE);
+        }
+    }
+
+    if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+        perror("socket");
+        exit(1);
+    }
+
+    if (optind + 1 == argc) {
+        /* server */
+        port = atoi(argv[optind]);
+        if (port < 1024 || port > 65535) {
+            fprintf(stderr, "invalid port");
+            close(sockfd);
+            exit(EXIT_FAILURE);
+        }
+        sa.sin_family = AF_INET;
+        sa.sin_port = htons(port);
+        sa.sin_addr.s_addr = htonl(INADDR_ANY);
+
+        if (bind(sockfd, (struct sockaddr *)&sa, sizeof(sa)) == -1) {
+            perror("bind");
+            close(sockfd);
+            exit(1);
+        }
+
+        if (listen(sockfd, MAX_CONNECTIONS) == -1) {
+            perror("listen");
+            close(sockfd);
+            exit(1);
+        }
+
+        setupserver();
+    }
+    else if (optind + 2 == argc) {
+        /* client */
+        port = atoi(argv[optind + 1]);
+        if (port < 1024 || port > 65535) {
+            fprintf(stderr, "invalid port");
+            close(sockfd);
+            exit(EXIT_FAILURE);
+        }
+        if ((hostent = gethostbyname(argv[optind])) == NULL) {
+            perror("hostname");
+            close(sockfd);
+            exit(1);
+        }
+
+        sa.sin_family = AF_INET;
+        sa.sin_port = htons(port);
+        sa.sin_addr.s_addr = *(uint32_t*) hostent -> h_addr_list[0];
+
+        if (connect(sockfd, (struct sockaddr *)&sa, sizeof(sa)) == -1) {
+            perror("connect");
+            close(sockfd);
+            exit(1);
+        }
+
+        setupclient(argv[optind]);
+    }
+    else {
+        fprintf(stderr, "usage: mytalk [ -v ] [ -a ] [ -N ] [ hostname ] port");
+        exit(EXIT_FAILURE);
+    }
+
+    return 0;
+}
